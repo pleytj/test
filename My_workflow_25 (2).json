@@ -1,0 +1,634 @@
+{
+  "name": "My workflow 25",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "e8ba65ef-ddd4-45f8-a3e8-7992c4fb58e2",
+        "responseMode": "lastNode",
+        "options": {
+          "binaryData": false
+        }
+      },
+      "id": "04dc631e-7f80-412a-ad09-6e8f467b15df",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -580,
+        2620
+      ],
+      "webhookId": "e8ba65ef-ddd4-45f8-a3e8-7992c4fb58e2"
+    },
+    {
+      "parameters": {
+        "functionCode": "/* Grab the real payload:\n   – If the Webhook put it under body, use that.\n   – Otherwise (future proof) fall back to the top level.            */\nconst payload = $json.body ?? $json;\n\nreturn [{\n  json: {\n    barcode:        String(payload.barcode || \"\"),\n    product_name:   payload.product_name || \"\",\n    user_profile:   payload.user_profile || {},\n    // keep the photo if Streamlit sent one\n    label_photo:    payload.label_photo        // may be undefined\n  }\n}];\n"
+      },
+      "id": "0deaeecd-15da-456d-a497-e57828f2048a",
+      "name": "Profile Manager Agent",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        2620
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "let input = $json;\nlet isOpenFoodFacts = !!input.product;\n\n// Normalize function\nfunction normalizeOpenFoodFacts(api) {\n  const p = api.product || {};\n  const nutriments = p.nutriments || {};\n\n  return {\n    product_name: p.product_name_nl || p.product_name || \"\",\n    barcode: api.code || \"\",\n    category: (p.categories_tags || [])[0] || \"\",\n    nutriscore: p.nutrition_grade_fr || p.nutriscore_grade || \"\",\n    image_url: p.image_url || p.selected_images?.front?.display?.nl || \"\",\n    image_ingredients_url: p.image_ingredients_url || p.selected_images?.ingredients?.display?.nl || \"\",\n    image_nutrition_url: p.image_nutrition_url || p.selected_images?.nutrition?.display?.nl || \"\",\n    ingredients_text: p.ingredients_text_nl || p.ingredients_text || \"\",\n    ingredients: (p.ingredients || []).map(i => ({ id: i.id || i.text || \"\" })),\n    allergy_info: (p.allergens_from_ingredients || \"\").replace(/en:/g, \"\").trim(),\n    nutrition_per_100g: {\n      energy_kcal_100g: parseFloat(nutriments[\"energy-kcal_100g\"]) || undefined,\n      energy_kj_100g: parseFloat(nutriments[\"energy-kj_100g\"]) || undefined,\n      fat_100g: parseFloat(nutriments.fat_100g) || undefined,\n      saturated_fat_100g: parseFloat(nutriments[\"saturated-fat_100g\"]) || undefined,\n      carbohydrates_100g: parseFloat(nutriments.carbohydrates_100g) || undefined,\n      sugars_100g: parseFloat(nutriments.sugars_100g) || undefined,\n      fiber_100g: parseFloat(nutriments.fiber_100g) || undefined,\n      proteins_100g: parseFloat(nutriments.proteins_100g) || undefined,\n      salt_100g: parseFloat(nutriments.salt_100g) || undefined,\n      sodium_100g: parseFloat(nutriments.sodium_100g) || undefined\n    }\n  };\n}\n\n// OCR format from GPT (after parsing out code fences)\nfunction normalizeGPT(ocr) {\n  if (ocr.choices?.[0]?.message?.content) {\n    const raw = ocr.choices[0].message.content\n      .replace(/^```json/, '')\n      .replace(/^```/, '')\n      .replace(/```$/, '')\n      .trim();\n    try {\n      ocr = JSON.parse(raw);\n    } catch (e) {\n      return { error: \"Failed to parse GPT response\", details: e.message };\n    }\n  }\n\n  const nutrition = {};\n  const allowedKeys = [\n    \"energy_kcal\", \"energy_kj\", \"fat\", \"saturated_fat\",\n    \"carbohydrates\", \"sugars\", \"fiber\", \"proteins\", \"salt\", \"sodium\"\n  ];\n  for (const key of allowedKeys) {\n    if (ocr.nutrition_per_100g?.[key] !== undefined) {\n      nutrition[`${key}_100g`] = parseFloat(\n        String(ocr.nutrition_per_100g[key]).replace(\",\", \".\")\n      );\n    }\n  }\n\n  return {\n    product_name: ocr.product_name || \"\",\n    barcode: ocr.barcode || \"\",\n    category: \"\",\n    nutriscore: \"\",\n    image_url: \"\",\n    image_ingredients_url: \"\",\n    image_nutrition_url: \"\",\n    ingredients_text: ocr.ingredients_text || \"\",\n    ingredients: (ocr.ingredients || []).map(i => ({\n      id: i.id?.toLowerCase().trim() || \"\"\n    })),\n    allergy_info: ocr.allergy_info || \"\",\n    nutrition_per_100g: nutrition\n  };\n}\n\n// Route to correct normalizer\nconst output = isOpenFoodFacts ? normalizeOpenFoodFacts(input) : normalizeGPT(input);\n\nreturn [{ json: output }];\n"
+      },
+      "id": "d4fe031c-105b-4d1c-b3e0-1040cb29fe37",
+      "name": "Label Normalizer Agent",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        120,
+        3060
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const profileItem = $items(\"Profile Manager Agent\")[0];\nconst productItem = $items(\"Label Normalizer Agent\")[0];\n\nif (!profileItem || !productItem) {\n  return [{ json: { error: \"One of the inputs is missing\" } }];\n}\n\nreturn [{\n  json: {\n    ...productItem.json,\n    user_profile: profileItem.json.user_profile || {}\n  }\n}];"
+      },
+      "id": "ff068089-677f-4b8b-8af2-b50e17950f24",
+      "name": "Merge Profile + Product",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        360,
+        3080
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "\nreturn [{\n  json: {\n    alternatives: [\n      { name: \"VeganBar Lite\", reason: \"No milk or lecithin, only 4g sugar\" },\n      { name: \"Nut-Free Energy Bar\", reason: \"No peanuts, low sugar, vegan certified\" }\n    ]\n  }\n}];\n"
+      },
+      "id": "4c8a08a3-62f8-4823-894b-4946e0d1635c",
+      "name": "Alternative Finder Agent",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        880,
+        2860
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "/**\n * data already holds:\n *   score, flags, summary, explained, suggestion, alternatives, coaching_message, …\n */\nconst data = items[0].json;\n\n/* ── your existing explanation builder ─────────────── */\nconst userProfile = data.user_profile || {};\nconst allergies   = new Set((userProfile.allergies || []).map(a => a.toLowerCase()));\nconst dietSet     = new Set((userProfile.diet      || []).map(d => d.toLowerCase()));\nconst healthGoals = new Set((userProfile.health_goals || []).map(h => h.toLowerCase()));\nconst ingredients = new Set((data.ingredients || []).map(i => i.id?.toLowerCase()));\n\nconst triggered   = [...allergies].filter(a => ingredients.has(a));\nconst fat   = data.nutrition_per_100g?.fat           || 0;\nconst carbs = data.nutrition_per_100g?.carbohydrates || 0;\n\nlet explanation = [];\nif (triggered.length) explanation.push(`Allergy alert: ${triggered.join(\", \")}.`);\nif (healthGoals.has(\"low fat\"))\n  explanation.push(fat > 20\n    ? `High fat content (${fat} g).`\n    : `Fat content (${fat} g) is within goal.`);\nif (dietSet.has(\"keto\"))\n  explanation.push(carbs > 10\n    ? `High carbohydrate content (${carbs} g) – not keto.`\n    : `Low carbohydrate content (${carbs} g) – keto-friendly.`);\n\n/* ── WRAP for Streamlit ────────────────────────────── */\nreturn [\n  {\n    json: {\n      message: {\n        content: {\n          ...data,\n          score_explanation: explanation.join(\" \")\n        },\n        coaching_message: data.coaching_message || \"\"\n      }\n    }\n  }\n];\n"
+      },
+      "id": "ede93c22-fb94-4a66-bc04-a781dd702ea2",
+      "name": "Merge for Final Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1920,
+        3080
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://world.openfoodfacts.org/api/v0/product/{{$json.barcode}}.json\n\n",
+        "options": {}
+      },
+      "id": "ab40b761-f124-4093-871f-351f211c655a",
+      "name": "Barcode API Fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        3220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 3,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1720,
+        3080
+      ],
+      "id": "650976b3-e115-445a-a41b-a7ec61f7d083",
+      "name": "Merge All Inputs"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2100,
+        3080
+      ],
+      "id": "5e2d302a-28e8-43ef-92c9-d15040d6654d",
+      "name": "Respond to Webhook",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "GPT-4O"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a food ingredient and nutrition analyzer.\n\nYour task is to evaluate a food product against a user's dietary profile and return a structured JSON response.\n\nThe user profile includes allergies, dietary preferences (e.g., vegan, keto), dislikes, and health goals (e.g., low carb, low salt).\n\nYou will receive:\n\nList of ingredients (e.g., [\"whole-wheat flour\", \"E471\", \"E481\"])\n\nNutrition values per 100g (carbs, salt, fat, protein, etc.)\n\nUser profile: allergies, diet, dislikes, health_goals\n\n⚠️ Strict filtering rules:\nOnly flag ingredients, nutrition values, or product characteristics that are directly relevant to the user’s profile.\n\n✅ Flag allergens listed in allergies\n\n✅ Flag ingredients listed in dislikes\n\n✅ Flag diet conflicts (e.g., meat for vegetarian, milk for vegan)\n\n✅ Flag nutrition mismatches based on health_goals (e.g., high sugar if goal is \"reduce sugar\")\n\n❌ Do not mention or flag ingredients like soy, gluten, milk, or sugar unless they are explicitly part of the user's profile\n\n❌ Do not include irrelevant items in flags, explanation, or summary — omit them entirely\n\n✳️ Positive profile alignment:\nIn addition to flagging conflicts, also highlight where the product aligns well with the user profile.\n\nMention “high protein” if the goal is “muscle gain”\n\nMention “suitable for vegetarians” if no meat/fish is present and the diet includes “vegetarian”\n\nMention “low sugar” if sugar is below 5g and the goal includes “reduce sugar”\n\nMention “low salt” if salt is below 0.3g and the goal includes “low salt”\nThese positive observations should be included in the summary and optionally in explained.\n\nReturn only valid JSON using this structure:\n\njson\nCopy\nEdit\n{\n  \"score\": 0–100,\n  \"flags\": [ \"contains_gluten\", \"not_keto_friendly\", \"high_sugar\" ],\n  \"summary\": \"Short 2–3 sentence summary.\",\n  \"explained\": [\n    \"Gluten: Product contains wheat flour and gluten.\",\n    \"Sugar: 20g sugar conflicts with your 'reduce sugar' goal\",\n    \"Protein: 20g protein supports your muscle gain goal\"\n  ],\n  \"suggestion\": \"Short coaching tip.\",\n  \"alternatives\": [\n    { \"name\": \"VeganBar Lite\", \"reason\": \"No gluten or soy, low carbs\" },\n    { \"name\": \"Nut-Free Energy Bar\", \"reason\": \"Vegan, no gluten, low sugar\" }\n  ]\n}\nOnly return the JSON — no markdown, no explanations, and no commentary.",
+              "role": "system"
+            },
+            {
+              "content": "=User profile:\n{{ JSON.stringify($json.user_profile, null, 2) }}\n\nIngredients:\n{{ JSON.stringify($json.ingredients, null, 2) }}\n\nNutrition per 100g:\n{{ JSON.stringify($json.nutrition_per_100g, null, 2) }}\n"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        560,
+        2540
+      ],
+      "id": "6497adfb-60e0-4b14-aea5-748dd7582bd5",
+      "name": "AI Analayzer",
+      "credentials": {
+        "openAiApi": {
+          "id": "Gym2tDxHw2EuRbHo",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "GPT-4O"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a smart, friendly nutrition coach.\n\nYou receive structured food scan data, including a score, flagged risks, ingredient notes, and the user's goals (like low carb, vegan, no soy, etc.).\n\nYour job is to give the user a **clear, motivating, and educational coaching message** based on the scan — to help them learn and improve their choices.\n\nYour response should:\n\n- Be written in a natural, conversational tone\n- Be structured into sections using markdown headings (##, ###)\n- Include:\n  - Specific observations based on the flags and nutrition info\n  - Quick definitions or examples (e.g. what counts as low carb or high fat)\n  - Personalized suggestions to improve next time\n  - 1–2 smart alternative ideas (based on the `alternatives` array if available)\n\nFocus on being supportive, insightful, and practical — not judgmental.\n\n---\n\n✅ OUTPUT FORMAT (strict):\n\nReturn only a **single valid JSON object** — no extra text, no triple backticks.\n\nIt must look like this:\n\n{\n  \"coaching_message\": \"## Nutrition Coach Advice\\n\\nYour full message in markdown here...\"\n}\n\nDo **NOT** include:\n- triple backticks\n- code blocks\n- indentation\n- explanations\n- multiple JSON objects\n- any intro like “Here’s your JSON:”\n\nThis will be parsed directly using JSON.parse(). **Format matters**.\n\n",
+              "role": "system"
+            },
+            {
+              "content": "=Here is the scan result:\n\nScore: {{ $json.score }}\nFlags: {{ ($json.flags ?? []).join(\", \") }}\nSummary: {{ $json.summary }}\nExplanation:\n{% if isinstance($json.explained, list) %}\n{{ $json.explained | join(\"\\n\") }}\n{% else %}\n{{ $json.explained }}\n{% endif %}\n\nCoaching Tip: {{ $json.suggestion ?? \"None\" }}\n\nAlternatives:\n{% for alt in $json.alternatives %}\n- {{ alt.name }}: {{ alt.reason }}\n{% endfor %}\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1280,
+        3300
+      ],
+      "id": "fb6370af-9513-4cb5-b3d7-b167e859a4a1",
+      "name": "AI nutrition coach",
+      "credentials": {
+        "openAiApi": {
+          "id": "Gym2tDxHw2EuRbHo",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract the raw string from message.content (it's a JSON-like string)\nlet raw = items[0].json.message?.content || \"\";\n\n// Strip backticks and trim\nraw = raw.trim().replace(/^```(json)?/, \"\").replace(/```$/, \"\").trim();\n\ntry {\n  const parsed = JSON.parse(raw);\n  return [{ json: parsed }];\n} catch (e) {\n  return [{\n    json: {\n      coaching_message: \"⚠️ Could not parse coaching message. Please try again.\"\n    }\n  }];\n}\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        3500
+      ],
+      "id": "4e586de7-25c1-44f0-9e0c-ba2dd8c94f67",
+      "name": "Code"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        960,
+        3300
+      ],
+      "id": "d0f45136-95db-48a9-b80f-c6714deea25f",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get analyzer data from item 1, alternatives from item 0\nconst analyzer = items[1].json.message?.content || {};\nconst alternatives = items[0].json.alternatives || [];\n\nreturn [{\n  json: {\n    ...analyzer,\n    alternatives\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        3500
+      ],
+      "id": "ed699eaf-132b-44b9-bc90-0778373b4ff3",
+      "name": "Code1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "89a29e49-ce1a-4562-9fc9-e2840d85a9ff",
+              "leftValue": "={{$json.label_photo !== undefined}}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -500,
+        3060
+      ],
+      "id": "23718064-eb30-4f2e-b382-58e2ddf4a1a6",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base64String = $json.label_photo || \"\";\n\nreturn [{\n  json: {\n    ...$json,\n    base64: base64String   // explicitly pass base64 along\n  },\n  binary: {\n    label_photo: {\n      data: Buffer.from(base64String, \"base64\"),\n      mimeType: \"image/jpeg\"\n    }\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -280,
+        2920
+      ],
+      "id": "e3911177-817c-46dd-b697-0ff910624662",
+      "name": "OCR branch"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"model\": \"gpt-4o\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"You are a food label reader that receives a photo of a food package. The label may be in any language (e.g., Dutch, German, French).\\n\\nYour job is to extract the following data:\\n\\n1. `product_name`: from the label.\\n\\n2. `ingredients_text`: the full printed ingredient list **in the original language**, exactly as on the label.\\n\\n3. `ingredients`: a standardized array of English ingredient IDs, for example:\\n```json\\n[{ \\\"id\\\": \\\"whole-wheat-flour\\\" }, { \\\"id\\\": \\\"salt\\\" }]\\n```\\nUse English identifiers where possible (from OpenFoodFacts-style taxonomy). Do not translate brand names or compound terms incorrectly.\\n\\n4. `nutrition_per_100g`: nutrition values using **English keys** like `fat`, `saturated_fat`, `carbohydrates`, `sugars`, `salt`, `fiber`, `proteins`, `energy_kcal`, `energy_kj`. Convert foreign-language label keys to English field names.\\n\\n5. `allergy_info`: the full allergen warning text **in the original language**.\\n\\n⚠️ Return only clean, valid JSON — no comments, markdown, or explanation.\"\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": \"data:image/jpeg;base64,{{$json.base64}}\"\n          }\n        }\n      ]\n    }\n  ],\n  \"max_tokens\": 1000\n}\n",
+        "options": {}
+      },
+      "id": "bf660255-2c50-47fe-b4fc-eafaed3c3e62",
+      "name": "Label reader agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -80,
+        2920
+      ],
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "table": "food_products",
+        "additionalFields": {}
+      },
+      "name": "Save to Supabase",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        180,
+        3660
+      ],
+      "id": "565778a6-995a-4e9c-8bd6-290bfc360471",
+      "credentials": {
+        "postgres": {
+          "id": "2Ktr9bpRFkYoMZ5E",
+          "name": "Supabase - Food DB (Session Pooler)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const barcode = $json.barcode ?? '';\nconst productName = ($json.product_name ?? '').replace(/'/g, \"''\");\nconst kcal = $json.nutrition_per_100g?.energy_kcal_100g ?? null;\nconst ingredientsText = ($json.ingredients_text ?? '').replace(/'/g, \"''\");\nconst source = $json.image_url ? \"openfoodfacts\" : \"label_reader\";\nconst timestamp = new Date().toISOString();\nconst rawJson = JSON.stringify($json).replace(/'/g, \"''\");\n\nreturn [{\n  json: {\n    query: `\n      INSERT INTO food_products (\n        barcode,\n        product_name,\n        nutrition_kcal,\n        ingredients_text,\n        source,\n        timestamp,\n        raw_json\n      )\n      VALUES (\n        '${barcode}',\n        '${productName}',\n        ${kcal},\n        '${ingredientsText}',\n        '${source}',\n        '${timestamp}',\n        '${rawJson}'\n      );\n    `\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        180,
+        3340
+      ],
+      "id": "0cd04926-e7a5-482c-8d4e-28f16d0f18bf",
+      "name": "Build Insert SQL"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.query }}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        400,
+        3340
+      ],
+      "id": "b156a781-a4c2-4065-b612-706ef82e784c",
+      "name": "Postgres execute query",
+      "credentials": {
+        "postgres": {
+          "id": "2Ktr9bpRFkYoMZ5E",
+          "name": "Supabase - Food DB (Session Pooler)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://mcp-food-analyzer-production.up.railway.app/mcp/profile_analyzer",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"user_profile\": $json[\"user_profile\"],\n  \"ingredients\": $json[\"ingredients\"],\n  \"nutrition_per_100g\": {\n    \"energy_kcal\": $json[\"nutrition_per_100g\"][\"energy_kcal_100g\"],\n    \"energy_kj\": $json[\"nutrition_per_100g\"][\"energy_kj_100g\"],\n    \"fat\": $json[\"nutrition_per_100g\"][\"fat_100g\"],\n    \"saturated_fat\": $json[\"nutrition_per_100g\"][\"saturated_fat_100g\"],\n    \"carbohydrates\": $json[\"nutrition_per_100g\"][\"carbohydrates_100g\"],\n    \"sugars\": $json[\"nutrition_per_100g\"][\"sugars_100g\"],\n    \"fiber\": $json[\"nutrition_per_100g\"][\"fiber_100g\"],\n    \"proteins\": $json[\"nutrition_per_100g\"][\"proteins_100g\"],\n    \"salt\": $json[\"nutrition_per_100g\"][\"salt_100g\"],\n    \"sodium\": $json[\"nutrition_per_100g\"][\"sodium_100g\"]\n  }\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        620,
+        3080
+      ],
+      "id": "1ad86b02-6930-4272-9246-997af14c16df",
+      "name": "MCP analyzer"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Profile Manager Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profile Manager Agent": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Profile + Product": {
+      "main": [
+        [
+          {
+            "node": "MCP analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alternative Finder Agent": {
+      "main": [
+        [
+          {
+            "node": "Merge All Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge for Final Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Barcode API Fetch": {
+      "main": [
+        [
+          {
+            "node": "Label Normalizer Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Normalizer Agent": {
+      "main": [
+        [
+          {
+            "node": "Build Insert SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge All Inputs": {
+      "main": [
+        [
+          {
+            "node": "Merge for Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Analayzer": {
+      "main": [
+        []
+      ]
+    },
+    "AI nutrition coach": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Merge All Inputs",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code1": {
+      "main": [
+        [
+          {
+            "node": "AI nutrition coach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "OCR branch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Barcode API Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OCR branch": {
+      "main": [
+        [
+          {
+            "node": "Label reader agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label reader agent": {
+      "main": [
+        [
+          {
+            "node": "Label Normalizer Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Supabase": {
+      "main": [
+        []
+      ]
+    },
+    "Build Insert SQL": {
+      "main": [
+        [
+          {
+            "node": "Postgres execute query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres execute query": {
+      "main": [
+        [
+          {
+            "node": "Merge Profile + Product",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP analyzer": {
+      "main": [
+        [
+          {
+            "node": "Alternative Finder Agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge All Inputs",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "7380a28a-12f0-4750-bf0f-ee4455bb4161",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "95c0c4fd88ec5f16bba4d0cea3d55b1ea3ec7bd1f9380b414d5d2f9b51b10098"
+  },
+  "id": "TvcDBKx4FLkm3dHx",
+  "tags": []
+}
